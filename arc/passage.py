@@ -249,7 +249,7 @@ async def handle_client(reader, writer):
 async def start_tcp_proxy_server():
     from db import init_db
     await init_db()
-    server = await asyncio.start_server(handle_client, "0.0.0.0", 8080)
+    server = await asyncio.start_server(handle_client, "0.0.0.0", 8880)
     print("🚀 TCP Proxy Server running on port 8080 (HTTP + HTTPS)")
     async with server:
         await server.serve_forever()
