@@ -7,13 +7,14 @@ from db import (
     add_token,
     disable_token,
     add_node,
-    update_node_ping
+    update_node_ping,
 )
 from modals import TokenRequest
 import uvicorn
 import uuid
 import threading
 import asyncio
+import random
 from urllib.parse import urlparse
 
 app = FastAPI()
@@ -34,6 +35,7 @@ async def node_websocket(websocket: WebSocket):
             if data["type"] == "register":
                 node_id = data["node_id"]
                 connected_nodes[node_id] = websocket
+                print(connected_nodes)
                 await add_node(node_id)
                 print(f"✅ Node '{node_id}' connected and registered in DB")
 
@@ -76,6 +78,7 @@ async def node_websocket(websocket: WebSocket):
             connected_nodes.pop(node_id, None)
             print(f"🔌 Node '{node_id}' disconnected")
 
+
 @app.post("/token/create")
 async def create_token(req: TokenRequest):
     await add_token(req.token)
@@ -104,7 +107,7 @@ async def handle_client(reader, writer):
             return
 
         line = first_line.decode().strip()
-        
+
         # === 2. Read headers ===
         while True:
             header_line = await reader.readuntil(b"\r\n")
@@ -121,13 +124,9 @@ async def handle_client(reader, writer):
                 b64token = value[6:].strip()
                 try:
                     decoded = base64.b64decode(b64token).decode()
-                    token = decoded.split(":", 1)[
-                        0
-                    ]  # Just token, ignore password part
+                    token = decoded.split(":", 1)[0]  # Just token, ignore password part
                 except Exception as e:
                     print(f"❌ Token decode error: {e}")
-
-        print(f"🔐 Extracted Token: {token}")
 
         # === 3. Validate the token ===
         if not token or not await validate_token(token):
@@ -137,14 +136,19 @@ async def handle_client(reader, writer):
             return
 
         method, path, *_ = line.split()
-        
+
         # HTTPS Tunneling
         if method == "CONNECT":
             target_host, target_port = path.split(":")
             target_port = int(target_port)
 
             nodes = await get_available_nodes()
+            print("Available nodes:", nodes)
+            print("Connected nodes:", list(connected_nodes.keys()))
+            random.shuffle(nodes)
             for node_id in nodes:
+                print("Available nodes:", nodes)
+                print("Connected nodes:", list(connected_nodes.keys()))
                 try:
                     websocket = connected_nodes.get(node_id)
                     if not websocket:
@@ -195,7 +199,7 @@ async def handle_client(reader, writer):
             host = headers.get("host")
             url = f"http://{host}{path}"
             nodes = await get_available_nodes()
-
+            random.shuffle(nodes)
             for node_id in nodes:
                 try:
                     websocket = connected_nodes.get(node_id)
@@ -248,17 +252,22 @@ async def handle_client(reader, writer):
 
 async def start_tcp_proxy_server():
     from db import init_db
+
     await init_db()
     server = await asyncio.start_server(handle_client, "0.0.0.0", 8880)
-    print("🚀 TCP Proxy Server running on port 8080 (HTTP + HTTPS)")
+    print("🚀 TCP Proxy Server running on port 8880 (HTTP + HTTPS)")
     async with server:
         await server.serve_forever()
 
 
-def run_fastapi():
-    uvicorn.run(app, host="0.0.0.0", port=8010)
-
-
 if __name__ == "__main__":
-    threading.Thread(target=run_fastapi, daemon=True).start()
-    asyncio.run(start_tcp_proxy_server())
+
+    async def start_all():
+        asyncio.create_task(start_tcp_proxy_server())
+        config = uvicorn.Config(
+            app, host="0.0.0.0", port=8010, log_level="info"
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
+
+    asyncio.run(start_all())
