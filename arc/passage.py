@@ -116,7 +116,14 @@ async def handle_client(reader, writer):
             key, value = header_line.decode().strip().split(":", 1)
             headers[key.lower()] = value.strip()
 
-        # Extract token from Proxy-Authorization
+        if "proxy-authorization" not in headers:
+            writer.write(b"HTTP/1.1 407 Proxy Authentication Required\r\n")
+            writer.write(b"Proxy-Authenticate: Basic realm=\"Access to proxy\"\r\n")
+            writer.write(b"Content-Length: 0\r\n\r\n")
+            await writer.drain()
+            writer.close()
+            return
+        # Extract token from Proxy-
         if key == "Proxy-Authorization" or key.lower() == "proxy-authorization":
             import base64
 
@@ -143,12 +150,8 @@ async def handle_client(reader, writer):
             target_port = int(target_port)
 
             nodes = await get_available_nodes()
-            print("Available nodes:", nodes)
-            print("Connected nodes:", list(connected_nodes.keys()))
             random.shuffle(nodes)
             for node_id in nodes:
-                print("Available nodes:", nodes)
-                print("Connected nodes:", list(connected_nodes.keys()))
                 try:
                     websocket = connected_nodes.get(node_id)
                     if not websocket:
@@ -265,7 +268,7 @@ if __name__ == "__main__":
     async def start_all():
         asyncio.create_task(start_tcp_proxy_server())
         config = uvicorn.Config(
-            app, host="0.0.0.0", port=8010, log_level="info"
+            app, host="0.0.0.0", port=8010, log_level="info", workers=1
         )
         server = uvicorn.Server(config)
         await server.serve()

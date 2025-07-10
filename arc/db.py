@@ -1,9 +1,10 @@
 import aiosqlite
 import uuid
 import time
+import os
 from datetime import datetime
 
-DB_PATH = "proxy.db"
+DB_PATH = os.path.join(os.path.dirname(__file__), "proxy.db")
 
 
 # === INIT ===
@@ -48,6 +49,7 @@ async def init_db():
         """
         )
 
+        await c.execute("PRAGMA journal_mode=WAL;")
         await conn.commit()
 
 
