@@ -64,8 +64,10 @@ async def node_websocket(websocket: WebSocket):
                     try:
                         writer.write(bytes.fromhex(data["data"]))
                         await writer.drain()
-                    except Exception as e:
-                        print(f"❌ Error writing to client: {e}")
+                    except (ConnectionResetError, BrokenPipeError) as e:
+                        print(f"❌ Client disconnected: {e}")
+                        writer.close()
+                        return
 
             elif data["type"] == "https-tunnel-error":
                 tunnel_id = data["tunnel_id"]
@@ -263,14 +265,10 @@ async def start_tcp_proxy_server():
         await server.serve_forever()
 
 
+def run_fastapi():
+    uvicorn.run(app, host="0.0.0.0", port=8010)
+
+
 if __name__ == "__main__":
-
-    async def start_all():
-        asyncio.create_task(start_tcp_proxy_server())
-        config = uvicorn.Config(
-            app, host="0.0.0.0", port=8010, log_level="info", workers=1
-        )
-        server = uvicorn.Server(config)
-        await server.serve()
-
-    asyncio.run(start_all())
+    threading.Thread(target=run_fastapi, daemon=True).start()
+    asyncio.run(start_tcp_proxy_server())
