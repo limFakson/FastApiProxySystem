@@ -49,6 +49,7 @@ async def node_websocket(websocket: WebSocket):
             elif data["type"] == "ping":
                 node_id = data["node_id"]
                 connected_nodes[node_id]["last_ping"] = time.time()
+                connected_nodes[node_id]["websocket"] = websocket
                 await update_node_status(node_id, True)
                 print(f"🔁 Ping from node '{node_id}', connection updated")
 
