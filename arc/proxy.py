@@ -289,7 +289,7 @@ async def check_node_health():
                 node_deatils = await get_node_details(node_id)
                 last_ping = node_deatils[2]
                 if connected_nodes.get(node_id) is not None:
-                    last_ping = str(connected_nodes.get(node_id)["last_ping"])
+                    last_ping = str(connected_nodes.get(node_id)['last_ping'])
                 if (
                     current_time - datetime.fromisoformat(last_ping).timestamp()
                     > NODE_TIMEOUT

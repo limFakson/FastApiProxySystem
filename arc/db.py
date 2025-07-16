@@ -88,6 +88,12 @@ async def get_available_nodes():
         )
         return [row[0] for row in await c.fetchall()]
 
+async def get_node_details(node_id):
+    async with aiosqlite.connect(DB_PATH) as conn:
+        c = await conn.cursor()
+        await c.execute("SELECT * FROM nodes WHERE node_id = ?", (node_id,))
+        result = await c.fetchall()
+        return result[0]
 
 async def update_node_status(node_id: str, is_online: bool):
     async with aiosqlite.connect(DB_PATH) as conn:
