@@ -5,8 +5,8 @@ import httpx
 
 GATEWAY_URL = "ws://localhost:8010/ws"
 NODE_ID = "node_002"  # dynamic node identifier
-MAX_RETRIES = 5
-RETRY_DELAY = 10
+MAX_RETRIES = 15
+RETRY_DELAY = 8
 PING_INTERVAL = 30  # seconds
 
 # Store all active HTTPS tunnels: tunnel_id → writer
@@ -82,7 +82,11 @@ async def handle_ws():
     retries = 0
     while retries < MAX_RETRIES:
         try:
-            async with websockets.connect(GATEWAY_URL) as websocket:
+            async with websockets.connect(
+                GATEWAY_URL,
+                ping_interval=60,
+                ping_timeout=80,
+            ) as websocket:
                 # Register node
                 await websocket.send(
                     json.dumps({"type": "register", "node_id": NODE_ID})
@@ -151,9 +155,7 @@ async def handle_ws():
                     except Exception as e:
                         print(f"WebSocket error: {e}")
                         # Cancel all tunnel readers
-                        for tid, task in tunnel_tasks.items():
-                            if not task.done():
-                                task.cancel()
+                        await task_cancellation(tunnel_tasks.copy())
                         tunnel_tasks.clear()
                         active_tunnels.clear()
                         break  # Exit inner while loop to reconnect
@@ -171,6 +173,12 @@ async def handle_ws():
         else:
             print("❌ Maximum retry attempts reached. Exiting.")
             break
+
+
+async def task_cancellation(tunnel_tasks):
+    for tid, task in tunnel_tasks.items():
+        if not task.done():
+            task.cancel()
 
 
 if __name__ == "__main__":
