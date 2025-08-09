@@ -284,23 +284,33 @@ async def check_node_health():
 
     try:
         while True:
-            current_time = time.time()
-            nodes = await get_available_nodes()
-            for node_id in nodes:
-                node_deatils = await get_node_details(node_id)
-                last_ping = node_deatils[2]
-                if connected_nodes.get(node_id) is not None:
-                    last_ping = str(connected_nodes.get(node_id)["last_ping"])
-                if (
-                    current_time - datetime.fromisoformat(last_ping).timestamp()
-                    > NODE_TIMEOUT
-                ):
-                    print(f"❌ Node '{node_id}' timed out and will be deactivated")
-                    connected_nodes.pop(node_id, None)
-                    await update_node_status(
-                        node_id, False
-                    )  # Assuming you have a function to disable the node in the DB
-            await asyncio.sleep(PING_INTERVAL)
+            try:
+                current_time = time.time()
+                nodes = await get_available_nodes()
+                for node_id in nodes:
+                    node_deatils = await get_node_details(node_id)
+                    last_ping = node_deatils[2]
+                    if connected_nodes.get(node_id) is not None:
+                        last_ping = connected_nodes[node_id]["last_ping"]
+
+                    # Convert properly
+                    if isinstance(last_ping, (int, float, str)) and str(last_ping).replace('.', '', 1).isdigit():
+                        last_ping_dt = datetime.fromtimestamp(float(last_ping))
+                    else:
+                        last_ping_dt = datetime.fromisoformat(last_ping)
+                        
+                    if (
+                        current_time - last_ping_dt.timestamp()
+                        > NODE_TIMEOUT
+                    ):
+                        print(f"❌ Node '{node_id}' timed out and will be deactivated")
+                        connected_nodes.pop(node_id, None)
+                        await update_node_status(
+                            node_id, False
+                        )  # Assuming you have a function to disable the node in the DB
+                await asyncio.sleep(PING_INTERVAL)
+            except Exception as e:
+                print(f"Error occurred in checker: {e}")
     except Exception as e:
         print(f"Error in health check: {e}")
 
