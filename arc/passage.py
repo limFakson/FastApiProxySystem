@@ -270,7 +270,6 @@ async def start_tcp_proxy_server():
     await init_db()
     server = await asyncio.start_server(handle_client, "0.0.0.0", 8880)
     print("🚀 TCP Proxy Server running on port 8880 (HTTP + HTTPS)")
-    asyncio.create_task(check_node_health())  # Start the health check task
     async with server:
         await server.serve_forever()
 
@@ -282,29 +281,46 @@ def run_fastapi():
 async def check_node_health():
     from datetime import datetime
 
+    print("Node Health Monitor Started 🚀")
+
     try:
         while True:
-            current_time = time.time()
-            nodes = await get_available_nodes()
-            for node_id in nodes:
-                node_deatils = await get_node_details(node_id)
-                last_ping = node_deatils[2]
-                if connected_nodes.get(node_id) is not None:
-                    last_ping = str(connected_nodes.get(node_id)["last_ping"])
-                if (
-                    current_time - datetime.fromisoformat(last_ping).timestamp()
-                    > NODE_TIMEOUT
-                ):
-                    print(f"❌ Node '{node_id}' timed out and will be deactivated")
-                    connected_nodes.pop(node_id, None)
-                    await update_node_status(
-                        node_id, False
-                    )  # Assuming you have a function to disable the node in the DB
-            await asyncio.sleep(PING_INTERVAL)
+            try:
+                current_time = time.time()
+                nodes = await get_available_nodes()
+                for node_id in nodes:
+                    node_deatils = await get_node_details(node_id)
+                    last_ping = node_deatils[2]
+                    if connected_nodes.get(node_id) is not None:
+                        last_ping = connected_nodes[node_id]["last_ping"]
+
+                    # Convert properly
+                    if isinstance(last_ping, (int, float, str)) and str(last_ping).replace('.', '', 1).isdigit():
+                        last_ping_dt = datetime.fromtimestamp(float(last_ping))
+                    else:
+                        last_ping_dt = datetime.fromisoformat(last_ping)
+                        
+                    if (
+                        current_time - last_ping_dt.timestamp()
+                        > NODE_TIMEOUT
+                    ):
+                        print(f"❌ Node '{node_id}' timed out and will be deactivated")
+                        connected_nodes.pop(node_id, None)
+                        await update_node_status(
+                            node_id, False
+                        )  # Assuming you have a function to disable the node in the DB
+                await asyncio.sleep(PING_INTERVAL)
+            except Exception as e:
+                print(f"Error occurred in health check: {e}")
     except Exception as e:
         print(f"Error in health check: {e}")
 
 
+def run_health_monitor():
+    asyncio.run(check_node_health())  # Start the health check task
+
+
 if __name__ == "__main__":
     threading.Thread(target=run_fastapi, daemon=True).start()
+    threading.Thread(target=run_health_monitor, daemon=True).start()
     asyncio.run(start_tcp_proxy_server())
