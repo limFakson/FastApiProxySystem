@@ -269,7 +269,6 @@ async def start_tcp_proxy_server():
     await init_db()
     server = await asyncio.start_server(handle_client, "0.0.0.0", 8880)
     print("🚀 TCP Proxy Server running on port 8880 (HTTP + HTTPS)")
-    asyncio.create_task(check_node_health())  # Start the health check task
     async with server:
         await server.serve_forever()
 
@@ -281,6 +280,8 @@ def run_fastapi():
 async def check_node_health():
     from datetime import datetime
 
+    print("Node Health Monitor Started 🚀")
+
     try:
         while True:
             current_time = time.time()
@@ -289,7 +290,7 @@ async def check_node_health():
                 node_deatils = await get_node_details(node_id)
                 last_ping = node_deatils[2]
                 if connected_nodes.get(node_id) is not None:
-                    last_ping = str(connected_nodes.get(node_id)['last_ping'])
+                    last_ping = str(connected_nodes.get(node_id)["last_ping"])
                 if (
                     current_time - datetime.fromisoformat(last_ping).timestamp()
                     > NODE_TIMEOUT
@@ -304,6 +305,11 @@ async def check_node_health():
         print(f"Error in health check: {e}")
 
 
+def run_health_monitor():
+    asyncio.run(check_node_health())  # Start the health check task
+
+
 if __name__ == "__main__":
+    threading.Thread(target=run_health_monitor, daemon=True).start()
     threading.Thread(target=run_fastapi, daemon=True).start()
     asyncio.run(start_tcp_proxy_server())
