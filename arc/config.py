@@ -1,30 +1,19 @@
-import os, json, signal, logging
-from pathlib import Path
+import random
 
-cfg_path = Path(__file__).with_name("config.json")
+from asgiref.sync import async_to_sync
+from .db import get_available_nodes
+from .redis_helpers import get_all_connected_nodes
 
-
-def reload():
-    global cfg
-    try:
-        with open(cfg_path) as f:
-            cfg = json.load(f)
-    except FileNotFoundError:
-        cfg = {
-            "gateway_url": "ws://localhost:8010/ws",
-            "node_id": os.getenv("NODE_ID", "node_002"),
-            "tokens": os.getenv("TOKENS", "TEST_TOKEN_123").split(","),
-            "ping_interval": 30,
-            "node_timeout": 50,
-            "chunk_size": 64 * 1024,
-            "log_level": "INFO",
-        }
-
-
-def _sigusr1(*_):
-    reload()
-    logging.getLogger().info("Config reloaded")
-
-
-reload()
-signal.signal(signal.SIGUSR1, _sigusr1)
+def get_available_free_node() -> tuple:
+    available_nodes = async_to_sync(get_available_nodes)()
+    connected_nodes = get_all_connected_nodes()
+    
+    random.shuffle(available_nodes)
+    for node_id in available_nodes:
+        node_details = connected_nodes.get(node_id)
+        if node_details["status"] == "free":
+            return node_details, node_id
+        
+        continue
+    
+    return None, None
