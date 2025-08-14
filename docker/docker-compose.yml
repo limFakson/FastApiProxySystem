@@ -1,21 +1,20 @@
 version: '3.8'
 
 services:
+  # docker-compose.yml
   rabbitmq:
     image: rabbitmq:3-management
     ports:
-      - "5682:5672"
+      - "5672:5672"
       - "15672:15672"
     environment:
-      - RABBITMQ_DEFAULT_USER=guest
-      - RABBITMQ_DEFAULT_PASS=guest
-    networks:
-      - mynetwork
+      - RABBITMQ_DEFAULT_USER=proxy_user
+      - RABBITMQ_DEFAULT_PASS=secure_password
+      - RABBITMQ_DEFAULT_VHOST=proxy_system
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
     healthcheck:
       test: ["CMD", "rabbitmqctl", "status"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   tcp_proxy:
     build:
