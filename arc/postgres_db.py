@@ -12,7 +12,7 @@ DB_PORT = os.getenv("DB_PORT", "")
 DB_NAME = os.getenv("DB_NAME", "mydb")
 
 # DB_DSN = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-DB_DSN = "postgresql://root:mypassword@localhost/mydevdatabase"
+DB_DSN = "postgresql://root:mypassword@localhost/proxydb"
 
 
 # === INIT ===

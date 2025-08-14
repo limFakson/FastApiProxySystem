@@ -31,16 +31,16 @@ import pika
 import asyncpg
 from redis import asyncio as aioredis
 from aiohttp import web, ClientSession
-from aiohttp.web import WebSocket, WSMsgType
+
+# from aiohttp.web import WebSocket, WSMsgType
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, 
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -118,8 +118,7 @@ class ResponseMetrics:
             self.avg_delivery_time = delivery_time
         else:
             # Exponential moving average
-            self.avg_delivery_time = (0.9 * self.avg_delivery_time + 
-                                    0.1 * delivery_time)
+            self.avg_delivery_time = 0.9 * self.avg_delivery_time + 0.1 * delivery_time
 
 
 class ResponseHandlerService:
@@ -132,7 +131,7 @@ class ResponseHandlerService:
         self.pending_responses: Dict[str, PendingResponse] = {}
         self.client_connections: Dict[str, ClientConnection] = {}
         self.websocket_connections: Dict[str, WebSocket] = {}
-        
+
         # Response queues by delivery method
         self.response_queues: Dict[DeliveryMethod, asyncio.Queue] = {
             method: asyncio.Queue() for method in DeliveryMethod
@@ -181,8 +180,7 @@ class ResponseHandlerService:
         @self.app.get("/responses/{client_id}/stream")
         async def stream_responses(client_id: str):
             return StreamingResponse(
-                self.stream_client_responses(client_id),
-                media_type="text/plain"
+                self.stream_client_responses(client_id), media_type="text/plain"
             )
 
         @self.app.post("/responses/register")
@@ -195,7 +193,7 @@ class ResponseHandlerService:
                 "status": "healthy",
                 "pending_responses": len(self.pending_responses),
                 "active_connections": len(self.client_connections),
-                "timestamp": time.time()
+                "timestamp": time.time(),
             }
 
         @self.app.get("/stats")
@@ -246,8 +244,7 @@ class ResponseHandlerService:
         """Setup RabbitMQ connection and exchanges"""
         try:
             credentials = pika.PlainCredentials(
-                self.config["rabbitmq"]["user"], 
-                self.config["rabbitmq"]["password"]
+                self.config["rabbitmq"]["user"], self.config["rabbitmq"]["password"]
             )
             parameters = pika.ConnectionParameters(
                 host=self.config["rabbitmq"]["host"],
@@ -270,15 +267,13 @@ class ResponseHandlerService:
 
             for exchange, exchange_type in exchanges:
                 self.channel.exchange_declare(
-                    exchange=exchange, 
-                    exchange_type=exchange_type, 
-                    durable=True
+                    exchange=exchange, exchange_type=exchange_type, durable=True
                 )
 
             # Declare response queues
             queues = [
                 "response_handler_incoming",
-                "response_delivery_callbacks", 
+                "response_delivery_callbacks",
                 "response_delivery_failed",
                 "client_notifications",
             ]
@@ -289,21 +284,21 @@ class ResponseHandlerService:
             # Bind to task completion events from Worker Pool
             self.channel.queue_bind(
                 exchange="task_events",
-                queue="response_handler_incoming", 
-                routing_key="task.completed"
+                queue="response_handler_incoming",
+                routing_key="task.completed",
             )
 
             self.channel.queue_bind(
                 exchange="task_events",
                 queue="response_handler_incoming",
-                routing_key="task.failed"
+                routing_key="task.failed",
             )
 
             # Bind to response delivery events
             self.channel.queue_bind(
                 exchange="response_events",
                 queue="response_delivery_callbacks",
-                routing_key="response.callback.*"
+                routing_key="response.callback.*",
             )
 
             logger.info("RabbitMQ setup completed")
@@ -317,7 +312,8 @@ class ResponseHandlerService:
         try:
             async with self.db_pool.acquire() as conn:
                 # Response delivery log
-                await conn.execute("""
+                await conn.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS response_deliveries (
                         id SERIAL PRIMARY KEY,
                         response_id VARCHAR(255) UNIQUE NOT NULL,
@@ -334,10 +330,12 @@ class ResponseHandlerService:
                         callback_url TEXT,
                         response_size_bytes INTEGER DEFAULT 0
                     )
-                """)
+                """
+                )
 
                 # Client connections tracking
-                await conn.execute("""
+                await conn.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS client_connections (
                         connection_id VARCHAR(255) PRIMARY KEY,
                         client_id VARCHAR(255) NOT NULL,
@@ -348,10 +346,12 @@ class ResponseHandlerService:
                         total_responses INTEGER DEFAULT 0,
                         is_active BOOLEAN DEFAULT true
                     )
-                """)
+                """
+                )
 
                 # Response content cache (for large responses)
-                await conn.execute("""
+                await conn.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS response_cache (
                         response_id VARCHAR(255) PRIMARY KEY,
                         content_data BYTEA NOT NULL,
@@ -362,29 +362,40 @@ class ResponseHandlerService:
                         access_count INTEGER DEFAULT 0,
                         last_accessed TIMESTAMP DEFAULT NOW()
                     )
-                """)
+                """
+                )
 
                 # Create indexes
-                await conn.execute("""
+                await conn.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_response_deliveries_client_id 
                     ON response_deliveries(client_id)
-                """)
-                await conn.execute("""
+                """
+                )
+                await conn.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_response_deliveries_status 
                     ON response_deliveries(status)
-                """)
-                await conn.execute("""
+                """
+                )
+                await conn.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_response_deliveries_created_at 
                     ON response_deliveries(created_at)
-                """)
-                await conn.execute("""
+                """
+                )
+                await conn.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_client_connections_client_id 
                     ON client_connections(client_id)
-                """)
-                await conn.execute("""
+                """
+                )
+                await conn.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_response_cache_expires_at 
                     ON response_cache(expires_at)
-                """)
+                """
+                )
 
                 logger.info("Database tables created/verified")
 
@@ -397,24 +408,26 @@ class ResponseHandlerService:
         try:
             pattern = "pending_response:*"
             cursor = "0"
-            
+
             while cursor != 0:
                 cursor, keys = await self.redis.scan(cursor, match=pattern, count=100)
-                
+
                 for key in keys:
                     response_data = await self.redis.get(key)
                     if response_data:
                         try:
                             data = json.loads(response_data)
                             response = PendingResponse(**data)
-                            
+
                             # Check if still valid
                             if not response.is_expired():
                                 self.pending_responses[response.response_id] = response
-                                logger.debug(f"Recovered pending response {response.response_id}")
+                                logger.debug(
+                                    f"Recovered pending response {response.response_id}"
+                                )
                             else:
                                 await self.redis.delete(key)
-                                
+
                         except Exception as e:
                             logger.error(f"Error recovering response from {key}: {e}")
                             await self.redis.delete(key)
@@ -427,7 +440,7 @@ class ResponseHandlerService:
     async def handle_websocket_connection(self, websocket: WebSocket, client_id: str):
         """Handle WebSocket connection for real-time response delivery"""
         connection_id = str(uuid.uuid4())
-        
+
         try:
             await websocket.accept()
             logger.info(f"WebSocket connection established for client {client_id}")
@@ -440,7 +453,7 @@ class ResponseHandlerService:
                 connected_at=time.time(),
                 last_activity=time.time(),
                 pending_responses=set(),
-                websocket=websocket
+                websocket=websocket,
             )
 
             self.client_connections[connection_id] = connection
@@ -472,26 +485,25 @@ class ResponseHandlerService:
         """Handle incoming WebSocket messages"""
         try:
             msg_type = message.get("type")
-            
+
             if msg_type == "ping":
                 # Send pong response
                 connection = self.client_connections.get(connection_id)
                 if connection and connection.websocket:
-                    await connection.websocket.send_text(json.dumps({
-                        "type": "pong",
-                        "timestamp": time.time()
-                    }))
-            
+                    await connection.websocket.send_text(
+                        json.dumps({"type": "pong", "timestamp": time.time()})
+                    )
+
             elif msg_type == "ack":
                 # Client acknowledges response receipt
                 response_id = message.get("response_id")
                 if response_id:
                     await self._mark_response_delivered(response_id)
-                    
+
             elif msg_type == "subscribe":
                 # Subscribe to specific response types or patterns
                 await self._handle_subscription(connection_id, message)
-                
+
             else:
                 logger.warning(f"Unknown WebSocket message type: {msg_type}")
 
@@ -502,16 +514,17 @@ class ResponseHandlerService:
         """Register client connection in database"""
         try:
             async with self.db_pool.acquire() as conn:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO client_connections 
                     (connection_id, client_id, connection_type, connected_at, last_activity)
                     VALUES ($1, $2, $3, $4, $5)
                 """,
                     connection.connection_id,
-                    connection.client_id, 
+                    connection.client_id,
                     connection.connection_type,
                     datetime.fromtimestamp(connection.connected_at),
-                    datetime.fromtimestamp(connection.last_activity)
+                    datetime.fromtimestamp(connection.last_activity),
                 )
 
         except Exception as e:
@@ -526,11 +539,14 @@ class ResponseHandlerService:
 
             # Update database
             async with self.db_pool.acquire() as conn:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     UPDATE client_connections 
                     SET disconnected_at = NOW(), is_active = false
                     WHERE connection_id = $1
-                """, connection_id)
+                """,
+                    connection_id,
+                )
 
             # Clean up memory
             self.client_connections.pop(connection_id, None)
@@ -555,6 +571,7 @@ class ResponseHandlerService:
 
     def _start_rabbitmq_consumer(self):
         """Start RabbitMQ consumer in separate thread"""
+
         def consume():
             try:
                 self.channel.basic_consume(
@@ -578,11 +595,11 @@ class ResponseHandlerService:
         """Handle incoming response from Worker Pool Service"""
         try:
             response_data = json.loads(body)
-            
+
             # Extract relevant information
             task_id = response_data.get("task_id")
             event_type = method.routing_key  # task.completed or task.failed
-            
+
             if not task_id:
                 logger.error("Response message missing task_id")
                 channel.basic_nack(delivery_tag=method.delivery_tag)
@@ -591,7 +608,7 @@ class ResponseHandlerService:
             # Process the response asynchronously
             asyncio.run_coroutine_threadsafe(
                 self._process_task_response(task_id, event_type, response_data),
-                asyncio.get_event_loop()
+                asyncio.get_event_loop(),
             )
 
             # Acknowledge message
@@ -601,25 +618,31 @@ class ResponseHandlerService:
             logger.error(f"Error handling response message: {e}")
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
-    async def _process_task_response(self, task_id: str, event_type: str, response_data: Dict):
+    async def _process_task_response(
+        self, task_id: str, event_type: str, response_data: Dict
+    ):
         """Process completed task response and prepare for delivery"""
         try:
             # Check if this is for a pending response
             matching_responses = [
-                r for r in self.pending_responses.values() 
-                if r.task_id == task_id
+                r for r in self.pending_responses.values() if r.task_id == task_id
             ]
 
             if not matching_responses:
                 # Create new response from task completion
-                response = await self._create_response_from_task(task_id, event_type, response_data)
+                response = await self._create_response_from_task(
+                    task_id, event_type, response_data
+                )
                 if not response:
                     return
             else:
                 response = matching_responses[0]
                 response.response_data = response_data
-                response.status = (ResponseStatus.COMPLETED if event_type == "task.completed" 
-                                 else ResponseStatus.FAILED)
+                response.status = (
+                    ResponseStatus.COMPLETED
+                    if event_type == "task.completed"
+                    else ResponseStatus.FAILED
+                )
 
             # Store response data
             await self._store_response_data(response)
@@ -635,7 +658,9 @@ class ResponseHandlerService:
         except Exception as e:
             logger.error(f"Error processing task response {task_id}: {e}")
 
-    async def _create_response_from_task(self, task_id: str, event_type: str, response_data: Dict) -> Optional[PendingResponse]:
+    async def _create_response_from_task(
+        self, task_id: str, event_type: str, response_data: Dict
+    ) -> Optional[PendingResponse]:
         """Create response object from task completion event"""
         try:
             # Get task info from Redis/database
@@ -645,16 +670,17 @@ class ResponseHandlerService:
                 return None
 
             response_id = str(uuid.uuid4())
-            
+
             # Determine delivery method (default to redis cache)
             delivery_method = DeliveryMethod.REDIS_CACHE
-            
+
             # Check for active WebSocket connection
             client_connections = [
-                c for c in self.client_connections.values() 
+                c
+                for c in self.client_connections.values()
                 if c.client_id == task_info.get("client_id")
             ]
-            
+
             if client_connections:
                 delivery_method = DeliveryMethod.WEBSOCKET
 
@@ -667,7 +693,11 @@ class ResponseHandlerService:
                 created_at=time.time(),
                 timeout=self.default_timeout,
                 response_data=response_data,
-                status=ResponseStatus.COMPLETED if event_type == "task.completed" else ResponseStatus.FAILED
+                status=(
+                    ResponseStatus.COMPLETED
+                    if event_type == "task.completed"
+                    else ResponseStatus.FAILED
+                ),
             )
 
             self.pending_responses[response_id] = response
@@ -687,11 +717,14 @@ class ResponseHandlerService:
 
             # Fall back to database
             async with self.db_pool.acquire() as conn:
-                row = await conn.fetchrow("""
+                row = await conn.fetchrow(
+                    """
                     SELECT task_id, client_id, request_data->>'request_id' as request_id
                     FROM tasks WHERE task_id = $1
-                """, task_id)
-                
+                """,
+                    task_id,
+                )
+
                 if row:
                     return dict(row)
 
@@ -705,29 +738,37 @@ class ResponseHandlerService:
         """Store response data in appropriate storage"""
         try:
             response_content = response.response_data
-            content_size = len(json.dumps(response_content).encode('utf-8'))
-            
+            content_size = len(json.dumps(response_content).encode("utf-8"))
+
             # Store in Redis for fast access
             cache_key = f"response:{response.response_id}"
-            
+
             # Compress large responses
             if content_size > self.compression_threshold:
-                compressed_data = gzip.compress(json.dumps(response_content).encode('utf-8'))
-                encoded_data = base64.b64encode(compressed_data).decode('utf-8')
-                
-                await self.redis.hset(cache_key, mapping={
-                    "data": encoded_data,
-                    "compressed": "true",
-                    "size": content_size,
-                    "created_at": response.created_at
-                })
+                compressed_data = gzip.compress(
+                    json.dumps(response_content).encode("utf-8")
+                )
+                encoded_data = base64.b64encode(compressed_data).decode("utf-8")
+
+                await self.redis.hset(
+                    cache_key,
+                    mapping={
+                        "data": encoded_data,
+                        "compressed": "true",
+                        "size": content_size,
+                        "created_at": response.created_at,
+                    },
+                )
             else:
-                await self.redis.hset(cache_key, mapping={
-                    "data": json.dumps(response_content),
-                    "compressed": "false", 
-                    "size": content_size,
-                    "created_at": response.created_at
-                })
+                await self.redis.hset(
+                    cache_key,
+                    mapping={
+                        "data": json.dumps(response_content),
+                        "compressed": "false",
+                        "size": content_size,
+                        "created_at": response.created_at,
+                    },
+                )
 
             # Set expiration
             await self.redis.expire(cache_key, self.default_timeout)
@@ -742,12 +783,14 @@ class ResponseHandlerService:
         except Exception as e:
             logger.error(f"Error storing response data: {e}")
 
-    async def _store_large_response_in_db(self, response: PendingResponse, content_size: int):
+    async def _store_large_response_in_db(
+        self, response: PendingResponse, content_size: int
+    ):
         """Store large response content in database"""
         try:
-            content_data = json.dumps(response.response_data).encode('utf-8')
+            content_data = json.dumps(response.response_data).encode("utf-8")
             is_compressed = False
-            
+
             # Compress if beneficial
             if content_size > self.compression_threshold:
                 compressed = gzip.compress(content_data)
@@ -756,7 +799,8 @@ class ResponseHandlerService:
                     is_compressed = True
 
             async with self.db_pool.acquire() as conn:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO response_cache 
                     (response_id, content_data, content_type, is_compressed, expires_at)
                     VALUES ($1, $2, $3, $4, $5)
@@ -769,17 +813,20 @@ class ResponseHandlerService:
                     content_data,
                     "application/json",
                     is_compressed,
-                    datetime.fromtimestamp(time.time() + self.default_timeout)
+                    datetime.fromtimestamp(time.time() + self.default_timeout),
                 )
 
         except Exception as e:
             logger.error(f"Error storing large response in database: {e}")
 
-    async def _log_response_delivery(self, response: PendingResponse, content_size: int):
+    async def _log_response_delivery(
+        self, response: PendingResponse, content_size: int
+    ):
         """Log response delivery attempt"""
         try:
             async with self.db_pool.acquire() as conn:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO response_deliveries 
                     (response_id, task_id, client_id, request_id, delivery_method, 
                      status, callback_url, response_size_bytes)
@@ -792,7 +839,7 @@ class ResponseHandlerService:
                     response.delivery_method.value,
                     response.status.value,
                     response.callback_url,
-                    content_size
+                    content_size,
                 )
 
         except Exception as e:
@@ -814,8 +861,10 @@ class ResponseHandlerService:
         try:
             # Find active WebSocket connections for client
             client_connections = [
-                c for c in self.client_connections.values()
-                if c.client_id == response.client_id and c.connection_type == "websocket"
+                c
+                for c in self.client_connections.values()
+                if c.client_id == response.client_id
+                and c.connection_type == "websocket"
             ]
 
             if not client_connections:
@@ -837,25 +886,29 @@ class ResponseHandlerService:
                             "request_id": response.request_id,
                             "status": response.status.value,
                             "data": response.response_data,
-                            "timestamp": time.time()
+                            "timestamp": time.time(),
                         }
 
                         await connection.websocket.send_text(json.dumps(message))
                         connection.update_activity()
                         success = True
-                        
-                        logger.debug(f"Delivered response {response.response_id} via WebSocket")
+
+                        logger.debug(
+                            f"Delivered response {response.response_id} via WebSocket"
+                        )
                         break
 
                 except Exception as e:
-                    logger.error(f"Error delivering to WebSocket {connection.connection_id}: {e}")
+                    logger.error(
+                        f"Error delivering to WebSocket {connection.connection_id}: {e}"
+                    )
                     # Remove failed connection
                     await self._cleanup_client_connection(connection.connection_id)
 
             if success:
                 response.status = ResponseStatus.DELIVERED
                 response.delivered_at = time.time()
-                
+
                 # Update metrics
                 delivery_time = time.time() - start_time
                 self.metrics.successful_deliveries += 1
@@ -895,7 +948,7 @@ class ResponseHandlerService:
             # Response is already stored in Redis/database by _store_response_data
             # Just need to mark it as ready for polling
             response.status = ResponseStatus.COMPLETED
-            
+
             # Store in client-specific polling queue
             polling_key = f"client_responses:{response.client_id}"
             await self.redis.lpush(polling_key, response.response_id)
@@ -936,7 +989,7 @@ class ResponseHandlerService:
                 "request_id": response.request_id,
                 "status": response.status.value,
                 "data": response.response_data,
-                "timestamp": time.time()
+                "timestamp": time.time(),
             }
 
             # Make HTTP callback
@@ -946,19 +999,21 @@ class ResponseHandlerService:
                         response.callback_url,
                         json=payload,
                         timeout=30,
-                        headers={"Content-Type": "application/json"}
+                        headers={"Content-Type": "application/json"},
                     ) as resp:
                         if resp.status == 200:
                             response.status = ResponseStatus.DELIVERED
                             response.delivered_at = time.time()
-                            
+
                             delivery_time = time.time() - start_time
                             self.metrics.successful_deliveries += 1
                             self.metrics.update_delivery_time(delivery_time)
 
                             await self._update_delivery_status(response, delivery_time)
-                            
-                            logger.info(f"Callback delivered for response {response.response_id}")
+
+                            logger.info(
+                                f"Callback delivered for response {response.response_id}"
+                            )
                         else:
                             raise Exception(f"Callback returned status {resp.status}")
 
@@ -994,13 +1049,15 @@ class ResponseHandlerService:
         try:
             # Response data is already stored by _store_response_data
             response.status = ResponseStatus.COMPLETED
-            
+
             # Add to client's response list for tracking
             client_responses_key = f"client_responses:{response.client_id}"
             await self.redis.lpush(client_responses_key, response.response_id)
             await self.redis.expire(client_responses_key, self.default_timeout)
 
-            logger.debug(f"Response {response.response_id} cached for client {response.client_id}")
+            logger.debug(
+                f"Response {response.response_id} cached for client {response.client_id}"
+            )
 
         except Exception as e:
             logger.error(f"Error caching response: {e}")
@@ -1013,71 +1070,69 @@ class ResponseHandlerService:
             # Check if response exists
             if response_id not in self.pending_responses:
                 return JSONResponse(
-                    status_code=404,
-                    content={"error": "Response not found"}
+                    status_code=404, content={"error": "Response not found"}
                 )
 
             response = self.pending_responses[response_id]
 
             # Verify client access
             if client_id and response.client_id != client_id:
-                return JSONResponse(
-                    status_code=403,
-                    content={"error": "Access denied"}
-                )
+                return JSONResponse(status_code=403, content={"error": "Access denied"})
 
             # Get response data
             response_data = await self._get_response_data(response_id)
             if not response_data:
                 return JSONResponse(
-                    status_code=404,
-                    content={"error": "Response data not found"}
+                    status_code=404, content={"error": "Response data not found"}
                 )
 
             # Mark as delivered
             await self._mark_response_delivered(response_id)
 
-            return JSONResponse(content={
-                "response_id": response_id,
-                "task_id": response.task_id,
-                "request_id": response.request_id,
-                "status": response.status.value,
-                "data": response_data,
-                "delivered_at": time.time()
-            })
+            return JSONResponse(
+                content={
+                    "response_id": response_id,
+                    "task_id": response.task_id,
+                    "request_id": response.request_id,
+                    "status": response.status.value,
+                    "data": response_data,
+                    "delivered_at": time.time(),
+                }
+            )
 
         except Exception as e:
             logger.error(f"Error getting response {response_id}: {e}")
             return JSONResponse(
-                status_code=500,
-                content={"error": "Internal server error"}
+                status_code=500, content={"error": "Internal server error"}
             )
 
     async def poll_client_responses(self, client_id: str, timeout: int = 30):
         """Poll for responses for a specific client"""
         try:
             start_time = time.time()
-            
+
             while time.time() - start_time < timeout:
                 # Check for available responses
                 response_key = f"client_responses:{client_id}"
                 response_id = await self.redis.rpop(response_key)
-                
+
                 if response_id:
                     response_data = await self._get_response_data(response_id)
                     if response_data:
                         # Mark as delivered
                         await self._mark_response_delivered(response_id)
-                        
+
                         response = self.pending_responses.get(response_id)
-                        return JSONResponse(content={
-                            "response_id": response_id,
-                            "task_id": response.task_id if response else None,
-                            "request_id": response.request_id if response else None,
-                            "status": "completed",
-                            "data": response_data,
-                            "delivered_at": time.time()
-                        })
+                        return JSONResponse(
+                            content={
+                                "response_id": response_id,
+                                "task_id": response.task_id if response else None,
+                                "request_id": response.request_id if response else None,
+                                "status": "completed",
+                                "data": response_data,
+                                "delivered_at": time.time(),
+                            }
+                        )
 
                 # Wait before next check
                 await asyncio.sleep(0.5)
@@ -1085,22 +1140,22 @@ class ResponseHandlerService:
             # Timeout reached
             return JSONResponse(
                 status_code=204,  # No Content
-                content={"message": "No responses available"}
+                content={"message": "No responses available"},
             )
 
         except Exception as e:
             logger.error(f"Error polling responses for client {client_id}: {e}")
             return JSONResponse(
-                status_code=500,
-                content={"error": "Internal server error"}
+                status_code=500, content={"error": "Internal server error"}
             )
 
     async def stream_client_responses(self, client_id: str):
         """Stream responses for a client via Server-Sent Events"""
+
         async def response_generator():
             try:
                 connection_id = str(uuid.uuid4())
-                
+
                 # Register streaming connection
                 connection = ClientConnection(
                     client_id=client_id,
@@ -1108,9 +1163,9 @@ class ResponseHandlerService:
                     connection_type="http_streaming",
                     connected_at=time.time(),
                     last_activity=time.time(),
-                    pending_responses=set()
+                    pending_responses=set(),
                 )
-                
+
                 self.client_connections[connection_id] = connection
                 await self._register_client_connection(connection)
 
@@ -1122,7 +1177,7 @@ class ResponseHandlerService:
                         # Check for responses
                         response_key = f"client_responses:{client_id}"
                         response_id = await self.redis.rpop(response_key)
-                        
+
                         if response_id:
                             response_data = await self._get_response_data(response_id)
                             if response_data:
@@ -1131,12 +1186,14 @@ class ResponseHandlerService:
                                     "type": "response",
                                     "response_id": response_id,
                                     "task_id": response.task_id if response else None,
-                                    "request_id": response.request_id if response else None,
+                                    "request_id": (
+                                        response.request_id if response else None
+                                    ),
                                     "status": "completed",
                                     "data": response_data,
-                                    "timestamp": time.time()
+                                    "timestamp": time.time(),
                                 }
-                                
+
                                 yield f"data: {json.dumps(event_data)}\n\n"
                                 await self._mark_response_delivered(response_id)
                                 connection.update_activity()
@@ -1171,8 +1228,7 @@ class ResponseHandlerService:
 
             if not all([client_id, (response_id or task_id)]):
                 return JSONResponse(
-                    status_code=400,
-                    content={"error": "Missing required parameters"}
+                    status_code=400, content={"error": "Missing required parameters"}
                 )
 
             # Create pending response entry
@@ -1187,7 +1243,7 @@ class ResponseHandlerService:
                 delivery_method=DeliveryMethod(delivery_method),
                 created_at=time.time(),
                 timeout=timeout,
-                callback_url=callback_url
+                callback_url=callback_url,
             )
 
             self.pending_responses[response_id] = response
@@ -1196,21 +1252,22 @@ class ResponseHandlerService:
             await self.redis.setex(
                 f"pending_response:{response_id}",
                 timeout,
-                json.dumps(asdict(response), default=str)
+                json.dumps(asdict(response), default=str),
             )
 
-            return JSONResponse(content={
-                "response_id": response_id,
-                "status": "registered",
-                "delivery_method": delivery_method,
-                "timeout": timeout
-            })
+            return JSONResponse(
+                content={
+                    "response_id": response_id,
+                    "status": "registered",
+                    "delivery_method": delivery_method,
+                    "timeout": timeout,
+                }
+            )
 
         except Exception as e:
             logger.error(f"Error registering response listener: {e}")
             return JSONResponse(
-                status_code=500,
-                content={"error": "Internal server error"}
+                status_code=500, content={"error": "Internal server error"}
             )
 
     async def cancel_pending_response(self, response_id: str, client_id: str):
@@ -1219,31 +1276,25 @@ class ResponseHandlerService:
             response = self.pending_responses.get(response_id)
             if not response:
                 return JSONResponse(
-                    status_code=404,
-                    content={"error": "Response not found"}
+                    status_code=404, content={"error": "Response not found"}
                 )
 
             if response.client_id != client_id:
-                return JSONResponse(
-                    status_code=403,
-                    content={"error": "Access denied"}
-                )
+                return JSONResponse(status_code=403, content={"error": "Access denied"})
 
             # Remove from tracking
             self.pending_responses.pop(response_id, None)
             await self.redis.delete(f"pending_response:{response_id}")
             await self.redis.delete(f"response:{response_id}")
 
-            return JSONResponse(content={
-                "response_id": response_id,
-                "status": "cancelled"
-            })
+            return JSONResponse(
+                content={"response_id": response_id, "status": "cancelled"}
+            )
 
         except Exception as e:
             logger.error(f"Error cancelling response {response_id}: {e}")
             return JSONResponse(
-                status_code=500,
-                content={"error": "Internal server error"}
+                status_code=500, content={"error": "Internal server error"}
             )
 
     # Helper methods
@@ -1253,36 +1304,39 @@ class ResponseHandlerService:
             # Try Redis cache first
             cache_key = f"response:{response_id}"
             cached_data = await self.redis.hgetall(cache_key)
-            
+
             if cached_data:
                 data = cached_data.get("data", "")
                 is_compressed = cached_data.get("compressed", "false") == "true"
-                
+
                 if is_compressed:
                     # Decompress data
                     compressed_data = base64.b64decode(data)
                     decompressed = gzip.decompress(compressed_data)
-                    return json.loads(decompressed.decode('utf-8'))
+                    return json.loads(decompressed.decode("utf-8"))
                 else:
                     return json.loads(data)
 
             # Try database backup
             async with self.db_pool.acquire() as conn:
-                row = await conn.fetchrow("""
+                row = await conn.fetchrow(
+                    """
                     SELECT content_data, is_compressed 
                     FROM response_cache 
                     WHERE response_id = $1 AND expires_at > NOW()
-                """, response_id)
-                
+                """,
+                    response_id,
+                )
+
                 if row:
                     content_data = row["content_data"]
                     is_compressed = row["is_compressed"]
-                    
+
                     if is_compressed:
                         decompressed = gzip.decompress(content_data)
-                        return json.loads(decompressed.decode('utf-8'))
+                        return json.loads(decompressed.decode("utf-8"))
                     else:
-                        return json.loads(content_data.decode('utf-8'))
+                        return json.loads(content_data.decode("utf-8"))
 
             return None
 
@@ -1300,12 +1354,15 @@ class ResponseHandlerService:
 
             # Update database
             async with self.db_pool.acquire() as conn:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     UPDATE response_deliveries 
                     SET status = 'delivered', delivered_at = NOW(),
                         delivery_time_ms = EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000
                     WHERE response_id = $1
-                """, response_id)
+                """,
+                    response_id,
+                )
 
             # Clean up from pending
             self.pending_responses.pop(response_id, None)
@@ -1314,22 +1371,29 @@ class ResponseHandlerService:
         except Exception as e:
             logger.error(f"Error marking response delivered: {e}")
 
-    async def _update_delivery_status(self, response: PendingResponse, delivery_time: float):
+    async def _update_delivery_status(
+        self, response: PendingResponse, delivery_time: float
+    ):
         """Update delivery status in database"""
         try:
             async with self.db_pool.acquire() as conn:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     UPDATE response_deliveries 
                     SET status = $1, delivered_at = $2, delivery_time_ms = $3,
                         error_message = $4, retry_count = $5
                     WHERE response_id = $6
                 """,
                     response.status.value,
-                    datetime.fromtimestamp(response.delivered_at) if response.delivered_at else None,
+                    (
+                        datetime.fromtimestamp(response.delivered_at)
+                        if response.delivered_at
+                        else None
+                    ),
                     int(delivery_time * 1000),
                     response.error_message,
                     response.retry_count,
-                    response.response_id
+                    response.response_id,
                 )
 
         except Exception as e:
@@ -1359,7 +1423,7 @@ class ResponseHandlerService:
                 "delivery_method": response.delivery_method.value,
                 "error_message": response.error_message,
                 "retry_count": response.retry_count,
-                "timestamp": time.time()
+                "timestamp": time.time(),
             }
 
             message = json.dumps(failure_event)
@@ -1367,13 +1431,15 @@ class ResponseHandlerService:
                 exchange="response_events",
                 routing_key="response.delivery.failed",
                 body=message,
-                properties=pika.BasicProperties(delivery_mode=2)
+                properties=pika.BasicProperties(delivery_mode=2),
             )
 
         except Exception as e:
             logger.error(f"Error handling failed delivery: {e}")
 
-    async def _deliver_pending_responses_to_client(self, client_id: str, connection_id: str):
+    async def _deliver_pending_responses_to_client(
+        self, client_id: str, connection_id: str
+    ):
         """Deliver any pending responses to newly connected client"""
         try:
             # Check for pending responses
@@ -1396,16 +1462,16 @@ class ResponseHandlerService:
                             "request_id": response.request_id,
                             "status": response.status.value,
                             "data": response_data,
-                            "timestamp": time.time()
+                            "timestamp": time.time(),
                         }
 
                         try:
                             await connection.websocket.send_text(json.dumps(message))
                             await self._mark_response_delivered(response_id)
-                            
+
                             # Remove from client queue
                             await self.redis.lrem(client_responses_key, 1, response_id)
-                            
+
                         except Exception as e:
                             logger.error(f"Error delivering pending response: {e}")
                             break
@@ -1419,7 +1485,7 @@ class ResponseHandlerService:
         while self.running:
             try:
                 current_time = time.time()
-                
+
                 # Clean up expired pending responses
                 expired_responses = []
                 for response_id, response in list(self.pending_responses.items()):
@@ -1444,10 +1510,12 @@ class ResponseHandlerService:
 
                 # Clean up expired cached responses in database
                 async with self.db_pool.acquire() as conn:
-                    await conn.execute("""
+                    await conn.execute(
+                        """
                         DELETE FROM response_cache 
                         WHERE expires_at < NOW()
-                    """)
+                    """
+                    )
 
                 # Update metrics
                 self.metrics.last_updated = current_time
@@ -1468,7 +1536,7 @@ class ResponseHandlerService:
             # This could be enhanced to support pattern-based subscriptions
             # For now, basic implementation
             pattern = message.get("pattern", "*")
-            
+
             connection = self.client_connections.get(connection_id)
             if connection:
                 # Store subscription pattern (simplified)
@@ -1492,18 +1560,23 @@ class ResponseHandlerService:
                 "avg_delivery_time": self.metrics.avg_delivery_time,
                 "responses_per_minute": self.metrics.responses_per_minute,
                 "success_rate": (
-                    (self.metrics.successful_deliveries / max(self.metrics.total_responses, 1)) * 100
+                    (
+                        self.metrics.successful_deliveries
+                        / max(self.metrics.total_responses, 1)
+                    )
+                    * 100
                 ),
                 "queue_sizes": {
-                    method.value: queue.qsize() 
+                    method.value: queue.qsize()
                     for method, queue in self.response_queues.items()
                 },
-                "timestamp": time.time()
+                "timestamp": time.time(),
             }
 
             # Add database stats
             async with self.db_pool.acquire() as conn:
-                db_stats = await conn.fetchrow("""
+                db_stats = await conn.fetchrow(
+                    """
                     SELECT 
                         COUNT(*) as total_deliveries,
                         COUNT(*) FILTER (WHERE status = 'delivered') as delivered_count,
@@ -1511,15 +1584,20 @@ class ResponseHandlerService:
                         AVG(delivery_time_ms) as avg_delivery_time_ms
                     FROM response_deliveries 
                     WHERE created_at > NOW() - INTERVAL '1 hour'
-                """)
+                """
+                )
 
                 if db_stats:
-                    stats.update({
-                        "hourly_deliveries": db_stats["total_deliveries"] or 0,
-                        "hourly_delivered": db_stats["delivered_count"] or 0,
-                        "hourly_failed": db_stats["failed_count"] or 0,
-                        "avg_delivery_time_ms": float(db_stats["avg_delivery_time_ms"] or 0)
-                    })
+                    stats.update(
+                        {
+                            "hourly_deliveries": db_stats["total_deliveries"] or 0,
+                            "hourly_delivered": db_stats["delivered_count"] or 0,
+                            "hourly_failed": db_stats["failed_count"] or 0,
+                            "avg_delivery_time_ms": float(
+                                db_stats["avg_delivery_time_ms"] or 0
+                            ),
+                        }
+                    )
 
             return stats
 
@@ -1549,17 +1627,14 @@ class ResponseHandlerService:
             app=self.app,
             host=self.config.get("host", "0.0.0.0"),
             port=self.config.get("port", 8082),
-            log_level="info"
+            log_level="info",
         )
 
         server = uvicorn.Server(config)
 
         try:
             # Run server and processors concurrently
-            await asyncio.gather(
-                server.serve(),
-                *self.response_processors
-            )
+            await asyncio.gather(server.serve(), *self.response_processors)
         except KeyboardInterrupt:
             logger.info("Shutting down Response Handler Service...")
         finally:
@@ -1596,26 +1671,27 @@ class ResponseHandlerService:
 
         logger.info("Response Handler Service shutdown completed")
 
+import os
 
 # Configuration compatible with existing services
 CONFIG = {
     "postgres": {
-        "host": "localhost",
-        "port": 5432,
-        "user": "proxy_user",
-        "password": "secure_password",
-        "database": "proxy_system",
+        "host": os.getenv("POSTGRES_HOST", "localhost"),
+        "port": int(os.getenv("POSTGRES_PORT", 5432)),
+        "user": os.getenv("POSTGRES_USER", "root"),
+        "password": os.getenv("POSTGRES_PASSWORD", "mypassword"),
+        "database": os.getenv("POSTGRES_DB", "proxydb"),
     },
     "redis": {
-        "host": "localhost", 
-        "port": 6379
+        "host": os.getenv("REDIS_HOST", "localhost"),
+        "port": int(os.getenv("REDIS_PORT", 6379)),
     },
     "rabbitmq": {
-        "host": "localhost",
-        "port": 5672,
-        "user": "proxy_user",
-        "password": "secure_password",
-        "vhost": "proxy_system",
+        "host": os.getenv("RABBITMQ_HOST", "localhost"),
+        "port": int(os.getenv("RABBITMQ_PORT", 5672)),
+        "user": os.getenv("RABBITMQ_USER", "guest"),
+        "password": os.getenv("RABBITMQ_PASSWORD", "guest"),
+        "vhost": os.getenv("RABBITMQ_VHOST", "/"),
     },
     "host": "0.0.0.0",
     "port": 8082,

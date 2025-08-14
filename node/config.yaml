@@ -1,0 +1,54 @@
+# Example configuration file (config.yaml):
+
+server_url: "ws://localhost:8010/ws/node"
+auth_token: "your_auth_token_here" 
+node_id: "node_unique_id"
+
+# Connection settings
+ping_interval: 30
+ping_timeout: 10
+connection_timeout: 30
+max_reconnect_attempts: 50
+reconnect_delay: 5
+max_reconnect_delay: 300
+
+# Performance settings  
+max_concurrent_requests: 20
+request_timeout: 30
+tunnel_buffer_size: 8192
+max_response_size: 10485760  # 10MB
+
+# Security settings
+verify_ssl: true
+allowed_domains: []  # Empty = allow all
+blocked_domains: []  # Block specific domains
+max_request_rate: 100  # requests per minute
+
+# Features
+enable_compression: true
+enable_metrics: true
+enable_filtering: true
+enable_caching: false
+
+# Example systemd service file (/etc/systemd/system/proxy-node.service):
+
+# [Unit]
+# Description=Residential Proxy Node Client
+# After=network.target
+
+# [Service]
+# Type=simple
+# User=proxy
+# Group=proxy
+# WorkingDirectory=/opt/proxy-node
+# Environment=PROXY_SERVER_URL=wss://your-proxy-system.com/ws/node
+# Environment=PROXY_AUTH_TOKEN=your_auth_token_here
+# Environment=PROXY_NODE_ID=node_unique_id
+# ExecStart=/usr/bin/python3 /opt/proxy-node/node_client.py
+# Restart=always
+# RestartSec=10
+# KillMode=mixed
+# TimeoutStopSec=30
+
+# [Install]
+# WantedBy=multi-user.target

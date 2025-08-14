@@ -614,30 +614,34 @@ class NodeManagerService:
             self.rabbitmq_connection.close()
 
         if self.redis:
-            await self.redis.close()
+            await self.redis.aclose()
 
         if self.db_pool:
             await self.db_pool.close()
 
         logger.info("Node Manager Service shutdown completed")
 
+import os
 
 # Example configuration
 CONFIG = {
     "postgres": {
-        "host": "localhost",
-        "port": 5432,
-        "user": "root",
-        "password": "mypassword",
-        "database": "mydevdatabase",
+        "host": os.getenv("POSTGRES_HOST", "localhost"),
+        "port": int(os.getenv("POSTGRES_PORT", 5432)),
+        "user": os.getenv("POSTGRES_USER", "root"),
+        "password": os.getenv("POSTGRES_PASSWORD", "mypassword"),
+        "database": os.getenv("POSTGRES_DB", "proxydb"),
     },
-    "redis": {"host": "localhost", "port": 6379},
+    "redis": {
+        "host": os.getenv("REDIS_HOST", "localhost"),
+        "port": int(os.getenv("REDIS_PORT", 6379)),
+    },
     "rabbitmq": {
-        "host": "localhost",
-        "port": 5672,
-        "user": "guest",
-        "password": "guest",
-        "vhost": "proxy_system",
+        "host": os.getenv("RABBITMQ_HOST", "localhost"),
+        "port": int(os.getenv("RABBITMQ_PORT", 5672)),
+        "user": os.getenv("RABBITMQ_USER", "guest"),
+        "password": os.getenv("RABBITMQ_PASSWORD", "guest"),
+        "vhost": os.getenv("RABBITMQ_VHOST", "/"),
     },
     "health_check_interval": 30,
     "node_timeout": 120,

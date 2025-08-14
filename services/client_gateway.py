@@ -211,6 +211,14 @@ class APIGateway:
     async def init_rabbitmq(self):
         """Initialize RabbitMQ connection compatible with existing services"""
         try:
+            if (
+                self.rabbitmq_connection
+                and self.channel
+                and self.channel.is_open
+                and not self.rabbitmq_connection.is_closed()
+            ):
+                return
+
             credentials = pika.PlainCredentials(
                 self.rabbitmq_config["user"], self.rabbitmq_config["password"]
             )
@@ -271,6 +279,14 @@ class APIGateway:
         except Exception as e:
             logger.error(f"Failed to initialize RabbitMQ: {e}")
             raise
+
+    def _is_connection_valid(self):
+        return (
+            self.connection
+            and not self.connection.is_closed
+            and self.channel
+            and not self.channel.is_closed
+        )
 
     async def authenticate_user(self, request: Request) -> Optional[User]:
         """Authenticate user from request headers"""
@@ -561,6 +577,8 @@ class APIGateway:
                 4: "tasks.critical",
             }
 
+            await self.init_rabbitmq()
+
             queue_name = queue_mapping.get(task_data.priority, "tasks.normal")
             routing_key = queue_name.replace("tasks.", "")
 
@@ -594,6 +612,7 @@ class APIGateway:
             )
 
             logger.info(f"Queued task {task_data.task_id} to {queue_name}")
+
             return True
 
         except Exception as e:
@@ -653,7 +672,6 @@ class APIGateway:
         # Initialize connections
         await self.init_db()
         await self.init_redis()
-        await self.init_rabbitmq()
 
         # Start HTTP server
         runner = web.AppRunner(self.app)
@@ -680,6 +698,11 @@ class APIGateway:
             await self.db_pool.close()
 
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Configuration compatible with existing services
 CONFIG = {
     "host": "0.0.0.0",
@@ -689,19 +712,22 @@ CONFIG = {
     "default_rate_limit": 1000,
     "request_timeout": 300,
     "postgres": {
-        "host": "localhost",
-        "port": 5432,
-        "user": "proxy_user",
-        "password": "secure_password",
-        "database": "proxy_system",
+        "host": os.getenv("POSTGRES_HOST", "localhost"),
+        "port": int(os.getenv("POSTGRES_PORT", 5432)),
+        "user": os.getenv("POSTGRES_USER", "root"),
+        "password": os.getenv("POSTGRES_PASSWORD", "mypassword"),
+        "database": os.getenv("POSTGRES_DB", "proxydb"),
     },
-    "redis": {"host": "localhost", "port": 6379},
+    "redis": {
+        "host": os.getenv("REDIS_HOST", "localhost"),
+        "port": int(os.getenv("REDIS_PORT", 6379)),
+    },
     "rabbitmq": {
-        "host": "localhost",
-        "port": 5672,
-        "user": "proxy_user",
-        "password": "secure_password",
-        "vhost": "proxy_system",
+        "host": os.getenv("RABBITMQ_HOST", "localhost"),
+        "port": int(os.getenv("RABBITMQ_PORT", 5672)),
+        "user": os.getenv("RABBITMQ_USER", "guest"),
+        "password": os.getenv("RABBITMQ_PASSWORD", "guest"),
+        "vhost": os.getenv("RABBITMQ_VHOST", "/"),
     },
 }
 

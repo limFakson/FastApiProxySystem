@@ -1,4 +1,4 @@
-# Dockerfile.health_check
+# Dockerfile.tcp_proxy
 FROM python:3.10-slim
 
 # Set the working directory
@@ -9,7 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
-COPY . .
+COPY ./services .
 
 # Command to run the application
-CMD ["python", "main.py", "run_health_monitor"]
+CMD ["python", "node_comm.py"]

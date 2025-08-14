@@ -1,4 +1,4 @@
-# Dockerfile.tcp_proxy
+# Dockerfile.fastapi
 FROM python:3.10-slim
 
 # Set the working directory
@@ -9,10 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
-COPY . .
-
-# Expose the port the app runs on
-EXPOSE 8880
+COPY ./services .
 
 # Command to run the application
-CMD ["python", "main.py", "process_request_queue"]
+CMD ["python", "client_gateway.py"]

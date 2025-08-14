@@ -847,23 +847,27 @@ class WorkerPoolService:
 
         logger.info("Worker Pool Service shutdown completed")
 
+import os
 
 # Example configuration
 CONFIG = {
     "postgres": {
-        "host": "localhost",
-        "port": 5432,
-        "user": "proxy_user",
-        "password": "secure_password",
-        "database": "proxy_system",
+        "host": os.getenv("POSTGRES_HOST", "localhost"),
+        "port": int(os.getenv("POSTGRES_PORT", 5432)),
+        "user": os.getenv("POSTGRES_USER", "root"),
+        "password": os.getenv("POSTGRES_PASSWORD", "mypassword"),
+        "database": os.getenv("POSTGRES_DB", "proxydb"),
     },
-    "redis": {"host": "localhost", "port": 6379},
+    "redis": {
+        "host": os.getenv("REDIS_HOST", "localhost"),
+        "port": int(os.getenv("REDIS_PORT", 6379)),
+    },
     "rabbitmq": {
-        "host": "localhost",
-        "port": 5672,
-        "user": "proxy_user",
-        "password": "secure_password",
-        "vhost": "proxy_system",
+        "host": os.getenv("RABBITMQ_HOST", "localhost"),
+        "port": int(os.getenv("RABBITMQ_PORT", 5672)),
+        "user": os.getenv("RABBITMQ_USER", "guest"),
+        "password": os.getenv("RABBITMQ_PASSWORD", "guest"),
+        "vhost": os.getenv("RABBITMQ_VHOST", "/"),
     },
     "max_workers": 20,
     "task_timeout_check_interval": 30,

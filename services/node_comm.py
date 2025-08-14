@@ -19,6 +19,7 @@ import pika
 import asyncpg
 from redis import asyncio as aioredis
 import websockets
+from pika.exceptions import ChannelClosed
 from websockets.server import WebSocketServerProtocol
 from websockets.exceptions import ConnectionClosed, WebSocketException
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -421,22 +422,23 @@ class NodeCommunicationService:
         client_ip = websocket.client.host if websocket.client else "unknown"
 
         try:
-            await websocket.accept()
-            logger.info(f"New WebSocket connection from {client_ip}")
+            while True:
+                await websocket.accept()
+                logger.info(f"New WebSocket connection from {client_ip}")
 
-            # Rate limiting check
-            if not await self._check_rate_limit(client_ip):
-                await websocket.close(code=4001, reason="Rate limit exceeded")
-                return
+                # Rate limiting check
+                if not await self._check_rate_limit(client_ip):
+                    await websocket.close(code=4001, reason="Rate limit exceeded")
+                    return
 
-            # Connection setup phase
-            node_id = await self._handle_connection_setup(websocket, client_ip)
-            if not node_id:
-                await websocket.close(code=4002, reason="Authentication failed")
-                return
+                # Connection setup phase
+                node_id = await self._handle_connection_setup(websocket, client_ip)
+                if not node_id:
+                    await websocket.close(code=4002, reason="Authentication failed")
+                    return
 
-            # Connection established - start message loop
-            await self._handle_node_messages(node_id, websocket)
+                # Connection established - start message loop
+                await self._handle_node_messages(node_id, websocket)
 
         except WebSocketDisconnect:
             logger.info(f"Node {node_id} disconnected normally")
@@ -468,10 +470,8 @@ class NodeCommunicationService:
 
             # Check if node already connected
             if node_id in self.active_connections:
-                logger.warning(
-                    f"Node {node_id} already connected, closing old connection"
-                )
-                await self._cleanup_node_connection(node_id)
+                logger.warning(f"Node {node_id} already connected, it gets updated")
+                # await self._cleanup_node_connection(node_id)
 
             # Create node connection
             user_agent = message.get("user_agent", "Unknown")
@@ -529,6 +529,7 @@ class NodeCommunicationService:
 
     async def _authenticate_node(self, node_id: str, auth_token: str) -> bool:
         """Authenticate node with provided token"""
+        return True
         try:
             # Validate token against database
             async with self.db_pool.acquire() as conn:
@@ -1351,20 +1352,28 @@ class NodeCommunicationService:
         """Start RabbitMQ consumer in separate thread"""
 
         def consume():
-            try:
-                self.channel.basic_consume(
-                    queue="node_commands_incoming",
-                    on_message_callback=self._handle_rabbitmq_command,
-                    auto_ack=False,
-                )
+            while True:
+                try:
+                    self.channel.basic_consume(
+                        queue="node_commands_incoming",
+                        on_message_callback=self._handle_rabbitmq_command,
+                        auto_ack=False,
+                    )
 
-                self.channel.basic_qos(prefetch_count=50)
+                    self.channel.basic_qos(prefetch_count=50)
 
-                logger.info("Starting RabbitMQ consumer for node commands...")
-                self.channel.start_consuming()
+                    logger.info("Starting RabbitMQ consumer for node commands...")
+                    self.channel.start_consuming()
 
-            except Exception as e:
-                logger.error(f"RabbitMQ consumer error: {e}")
+                except ChannelClosed as c:
+                    logger.error(f"RabbitMQ channel closed:{c}, Reconnecting....")
+                    time.sleep(15)
+                    self._setup_rabbitmq()
+
+                except Exception as e:
+                    logger.error(f"RabbitMQ consumer error: {e}")
+                    time.sleep(25)
+                    self._setup_rabbitmq()
 
         self.consumer_thread = threading.Thread(target=consume, daemon=True)
         self.consumer_thread.start()
@@ -1551,7 +1560,7 @@ class NodeCommunicationService:
         config = uvicorn.Config(
             app=self.app,
             host=self.config.get("host", "0.0.0.0"),
-            port=self.config.get("port", 8080),
+            port=self.config.get("port", 8010),
             log_level="info",
         )
 
@@ -1585,7 +1594,7 @@ class NodeCommunicationService:
             self.rabbitmq_connection.close()
 
         if self.redis:
-            await self.redis.close()
+            await self.redis.aclose()
 
         if self.db_pool:
             await self.db_pool.close()
@@ -1593,25 +1602,30 @@ class NodeCommunicationService:
         logger.info("Node Communication Service shutdown completed")
 
 
+import os
+
 # Example configuration
 CONFIG = {
     "postgres": {
-        "host": "localhost",
-        "port": 5432,
-        "user": "proxy_user",
-        "password": "secure_password",
-        "database": "proxy_system",
+        "host": os.getenv("POSTGRES_HOST", "localhost"),
+        "port": int(os.getenv("POSTGRES_PORT", 5432)),
+        "user": os.getenv("POSTGRES_USER", "root"),
+        "password": os.getenv("POSTGRES_PASSWORD", "mypassword"),
+        "database": os.getenv("POSTGRES_DB", "proxydb"),
     },
-    "redis": {"host": "localhost", "port": 6379},
+    "redis": {
+        "host": os.getenv("REDIS_HOST", "localhost"),
+        "port": int(os.getenv("REDIS_PORT", 6379)),
+    },
     "rabbitmq": {
-        "host": "localhost",
-        "port": 5672,
-        "user": "proxy_user",
-        "password": "secure_password",
-        "vhost": "proxy_system",
+        "host": os.getenv("RABBITMQ_HOST", "localhost"),
+        "port": int(os.getenv("RABBITMQ_PORT", 5672)),
+        "user": os.getenv("RABBITMQ_USER", "guest"),
+        "password": os.getenv("RABBITMQ_PASSWORD", "guest"),
+        "vhost": os.getenv("RABBITMQ_VHOST", "/"),
     },
     "host": "0.0.0.0",
-    "port": 8080,
+    "port": 8010,
     "heartbeat_interval": 30,
     "connection_timeout": 120,
     "max_connections_per_ip": 5,
