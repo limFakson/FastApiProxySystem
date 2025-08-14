@@ -26,6 +26,25 @@ active_tunnels = {}  # tunnel_id -> (client_writer, websocket)
 
 PING_INTERVAL = 30  # seconds
 NODE_TIMEOUT = 60  # seconds
+WORKER_COUNT = 5
+REQUEST_TIMEOUT = 40
+
+
+async def get_best_available_node():
+    nodes = await get_available_nodes()
+    random.shuffle(nodes)
+
+    for node_id in nodes:
+        node = connected_nodes.get(node_id)
+        if not node:
+            continue
+
+        async with node["lock"]:
+            if node["status"] == "free":
+                node["status"] = "busy"
+                return node_id, node["websocket"]
+
+    return None, None
 
 
 @app.websocket("/ws")
@@ -42,6 +61,8 @@ async def node_websocket(websocket: WebSocket):
                 connected_nodes[node_id] = {
                     "websocket": websocket,
                     "last_ping": time.time(),
+                    "status": "free",
+                    "lock": asyncio.Lock()
                 }
                 await add_node(node_id)
                 print(f"✅ Node '{node_id}' connected and registered in DB")
@@ -159,46 +180,62 @@ async def handle_client(reader, writer):
             target_host, target_port = path.split(":")
             target_port = int(target_port)
 
-            nodes = await get_available_nodes()
-            random.shuffle(nodes)
-            for node_id in nodes:
-                try:
-                    websocket = connected_nodes.get(node_id)
-                    websocket = websocket["websocket"]
-                    if not websocket:
-                        continue
+            for i in range(1, 4):
+                node_id, websocket = await get_best_available_node()
+                if node_id:
+                    break
 
-                    tunnel_id = str(uuid.uuid4())
-                    active_tunnels[tunnel_id] = (writer, websocket)
+                await asyncio.sleep(2)
+                
+            if not node_id:
+                writer.write(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
+                await writer.drain()
+                writer.close()
+                return
 
+            try:
+                # websocket = websocket["websocket"]
+                if not websocket:
+                    writer.write(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
+                    await writer.drain()
+                    writer.close()
+                    return
+
+                tunnel_id = str(uuid.uuid4())
+                active_tunnels[tunnel_id] = (writer, websocket)
+
+                await websocket.send_json(
+                    {
+                        "type": "https-connect",
+                        "tunnel_id": tunnel_id,
+                        "host": target_host,
+                        "port": target_port,
+                    }
+                )
+
+                while True:
+                    data = await reader.read(4096)
+                    if not data:
+                        break
                     await websocket.send_json(
                         {
-                            "type": "https-connect",
+                            "type": "https-tunnel-data",
                             "tunnel_id": tunnel_id,
-                            "host": target_host,
-                            "port": target_port,
+                            "data": data.hex(),
                         }
                     )
+                return
+            except Exception as e:
+                print(f"❌ Tunnel error on node {node_id}: {e}")
 
-                    while True:
-                        data = await reader.read(4096)
-                        if not data:
-                            break
-                        await websocket.send_json(
-                            {
-                                "type": "https-tunnel-data",
-                                "tunnel_id": tunnel_id,
-                                "data": data.hex(),
-                            }
-                        )
-                    return
-                except Exception as e:
-                    print(f"❌ Tunnel error on node {node_id}: {e}")
-                    continue
+                writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+                await writer.drain()
+                writer.close()
 
-            writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-            await writer.drain()
-            writer.close()
+            finally:
+                if node := connected_nodes.get(node_id):
+                    async with node["lock"]:
+                        node["status"] = "free"
 
         else:
             # HTTP forwarding
@@ -212,52 +249,69 @@ async def handle_client(reader, writer):
 
             host = headers.get("host")
             url = f"http://{host}{path}"
-            nodes = await get_available_nodes()
-            random.shuffle(nodes)
-            for node_id in nodes:
-                try:
-                    websocket = connected_nodes.get(node_id)
-                    if not websocket:
-                        continue
 
-                    request_id = str(uuid.uuid4())
-                    await websocket.send_json(
-                        {
-                            "type": "http-request",
-                            "request_id": request_id,
-                            "method": method,
-                            "url": url,
-                            "headers": headers,
-                            "body": "",
-                        }
-                    )
+            for i in range(1,4):
+                node_id, websocket = await get_best_available_node()
+                if node_id:
+                    break
 
-                    future = asyncio.get_event_loop().create_future()
-                    active_requests[request_id] = future
-                    response = await asyncio.wait_for(future, timeout=20)
+                await asyncio.sleep(3)
 
-                    await log_session(
-                        method,
-                        url,
-                        writer.get_extra_info("peername")[0],
-                        node_id,
-                        response["status_code"],
-                    )
+            if not node_id:
+                writer.write(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
+                await writer.drain()
+                writer.close()
+                return
 
-                    writer.write(f"HTTP/1.1 {response['status_code']} OK\r\n".encode())
-                    for k, v in response.get("headers", {}).items():
-                        writer.write(f"{k}: {v}\r\n".encode())
-                    writer.write(b"\r\n")
-                    writer.write(response.get("body", "").encode())
+            try:
+                if not websocket:
+                    writer.write(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
                     await writer.drain()
+                    writer.close()
                     return
-                except Exception as e:
-                    print(f"❌ HTTP proxy error on node {node_id}: {e}")
-                    continue
 
-            writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-            await writer.drain()
-            writer.close()
+                request_id = str(uuid.uuid4())
+                await websocket.send_json(
+                    {
+                        "type": "http-request",
+                        "request_id": request_id,
+                        "method": method,
+                        "url": url,
+                        "headers": headers,
+                        "body": "",
+                    }
+                )
+
+                future = asyncio.get_event_loop().create_future()
+                active_requests[request_id] = future
+                response = await asyncio.wait_for(future, timeout=20)
+
+                await log_session(
+                    method,
+                    url,
+                    writer.get_extra_info("peername")[0],
+                    node_id,
+                    response["status_code"],
+                )
+
+                writer.write(f"HTTP/1.1 {response['status_code']} OK\r\n".encode())
+                for k, v in response.get("headers", {}).items():
+                    writer.write(f"{k}: {v}\r\n".encode())
+                writer.write(b"\r\n")
+                writer.write(response.get("body", "").encode())
+                await writer.drain()
+                return
+            except Exception as e:
+                print(f"❌ HTTP proxy error on node {node_id}: {e}")
+
+                writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+                await writer.drain()
+                writer.close()
+
+            finally:
+                if node := connected_nodes.get(node_id):
+                    async with node["lock"]:
+                        node["status"] = "free"
 
     except Exception as e:
         print("🔴 Fatal proxy error:", e)
@@ -268,10 +322,18 @@ async def start_tcp_proxy_server():
     from db import init_db
 
     await init_db()
-    server = await asyncio.start_server(handle_client, "0.0.0.0", 8880)
-    print("🚀 TCP Proxy Server running on port 8880 (HTTP + HTTPS)")
-    async with server:
-        await server.serve_forever()
+    workers = []
+    for i in range(WORKER_COUNT):  # Configurable number of workers
+        server = await asyncio.start_server(
+            handle_client, 
+            "0.0.0.0", 
+            8880,
+            reuse_port=True  # Allows multiple workers to bind to same port
+        )
+        workers.append(server)
+
+    print(f"🚀 TCP Proxy Server running with {WORKER_COUNT} workers on port 8880")
+    await asyncio.gather(*[server.serve_forever() for server in workers])
 
 
 def run_fastapi():
@@ -299,7 +361,7 @@ async def check_node_health():
                         last_ping_dt = datetime.fromtimestamp(float(last_ping))
                     else:
                         last_ping_dt = datetime.fromisoformat(last_ping)
-                        
+
                     if (
                         current_time - last_ping_dt.timestamp()
                         > NODE_TIMEOUT
@@ -309,7 +371,13 @@ async def check_node_health():
                         await update_node_status(
                             node_id, False
                         )  # Assuming you have a function to disable the node in the DB
-                await asyncio.sleep(PING_INTERVAL)
+                    elif (
+                        connected_nodes[node_id]["status"] == "busy"
+                        and current_time - connected_nodes[node_id]["last_ping"]
+                        > REQUEST_TIMEOUT
+                    ):
+                        connected_nodes[node_id]["status"] = "free"
+                        await asyncio.sleep(PING_INTERVAL)
             except Exception as e:
                 print(f"Error occurred in health check: {e}")
     except Exception as e:
