@@ -378,6 +378,9 @@ async def check_node_health():
                     ):
                         connected_nodes[node_id]["status"] = "free"
                         await asyncio.sleep(PING_INTERVAL)
+                    else:
+                        asyncio.sleep(5)
+                        pass
             except Exception as e:
                 print(f"Error occurred in health check: {e}")
     except Exception as e:
