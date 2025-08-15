@@ -371,16 +371,16 @@ async def check_node_health():
                         await update_node_status(
                             node_id, False
                         )  # Assuming you have a function to disable the node in the DB
-                    elif (
-                        connected_nodes[node_id]["status"] == "busy"
-                        and current_time - connected_nodes[node_id]["last_ping"]
-                        > REQUEST_TIMEOUT
-                    ):
-                        connected_nodes[node_id]["status"] = "free"
-                        await asyncio.sleep(PING_INTERVAL)
-                    else:
-                        asyncio.sleep(5)
-                        pass
+                    # elif (
+                    #     connected_nodes[node_id]["status"] == "busy"
+                    #     and current_time - connected_nodes[node_id]["last_ping"]
+                    #     > REQUEST_TIMEOUT
+                    # ):
+                    #     connected_nodes[node_id]["status"] = "free"
+                    #     await asyncio.sleep(PING_INTERVAL)
+                    # else:
+                    #     asyncio.sleep(5)
+                    #     pass
             except Exception as e:
                 print(f"Error occurred in health check: {e}")
     except Exception as e:
